@@ -1,0 +1,28 @@
+import { TemplateConfig } from '@/types/template';
+
+export const twoLineHighlight: TemplateConfig = {
+  id: 'two-line-highlight',
+  name: 'Two Line Highlight',
+  category: 'Highlight',
+  description: 'Balanced two-line composition with a soft highlight strip behind key phrases.',
+  tag: 'Popular',
+  fontFamily: 'Poppins',
+  fontWeight: 700,
+  fontSize: 48,
+  letterSpacing: 0,
+  lineHeight: 1.3,
+  textColor: '#FFFFFF',
+  highlightColor: '#FFD600',
+  accentColor: 'rgba(255, 214, 0, 0.25)',
+  textLayout: 'two-line',
+  background: 'transparent',
+  backgroundTreatment: 'highlight-strip',
+  stroke: false,
+  shadow: true,
+  shadowBlur: 6,
+  shadowColor: 'rgba(0, 0, 0, 0.7)',
+  position: { x: 50, y: 80, anchor: 'center' },
+  animation: 'slide-up',
+  revealMode: 'phrase',
+  highlightMode: 'background-box',
+};

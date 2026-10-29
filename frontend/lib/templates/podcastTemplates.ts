@@ -1,0 +1,63 @@
+import { TemplateConfig } from '@/types/template';
+
+export const podcastConversational: TemplateConfig = {
+  id: 'podcast-conversational',
+  name: 'Podcast Conversational',
+  category: 'Podcast',
+  description: 'Clean medium typography for interview & podcast reel clips.',
+  tag: 'Podcast',
+  supportedAspectRatios: ['9:16', '16:9', '4:5'],
+  typography: {
+    fontFamily: 'Inter',
+    fontWeight: 600,
+    fontSize: 46,
+    letterSpacing: 0,
+    lineHeight: 1.3,
+  },
+  layout: { textLayout: 'two-line', maxCaptionWidth: 88, paddingX: 18, paddingY: 8 },
+  colors: { primaryTextColor: '#FFFFFF', highlightColor: '#38BDF8', accentColor: '#1E293B' },
+  background: { type: 'rounded-box', color: 'rgba(15, 23, 42, 0.85)', borderRadius: 12 },
+  stroke: { enabled: false },
+  shadow: { enabled: true, color: 'rgba(0,0,0,0.7)', blur: 6 },
+  glow: { enabled: false },
+  highlight: { mode: 'active-word', highlightColors: ['#38BDF8'] },
+  animation: { entrance: 'fade', wordBehavior: 'active-word', characterBehavior: 'none' },
+  position: { x: 50, y: 84, anchor: 'bottom-center' },
+  fontFamily: 'Inter',
+  fontWeight: 600,
+  fontSize: 46,
+  textColor: '#FFFFFF',
+  highlightColor: '#38BDF8',
+};
+
+export const studioMic: TemplateConfig = {
+  id: 'studio-mic',
+  name: 'Studio Mic Focus',
+  category: 'Podcast',
+  description: 'Slate background subtitle strip with gold keyword emphasis for talk shows.',
+  tag: 'TalkShow',
+  supportedAspectRatios: ['9:16', '16:9'],
+  typography: {
+    fontFamily: 'Poppins',
+    fontWeight: 700,
+    fontSize: 48,
+    letterSpacing: 0,
+    lineHeight: 1.25,
+  },
+  layout: { textLayout: 'standard', paddingX: 20, paddingY: 10 },
+  colors: { primaryTextColor: '#F8FAFC', highlightColor: '#FACC15' },
+  background: { type: 'semi-transparent', color: 'rgba(30, 41, 59, 0.9)', borderRadius: 14 },
+  stroke: { enabled: false },
+  shadow: { enabled: true, color: 'rgba(0,0,0,0.8)', blur: 8 },
+  glow: { enabled: false },
+  highlight: { mode: 'one-keyword', highlightColors: ['#FACC15'] },
+  animation: { entrance: 'slide-up', wordBehavior: 'none', characterBehavior: 'none' },
+  position: { x: 50, y: 85, anchor: 'bottom-center' },
+  fontFamily: 'Poppins',
+  fontWeight: 700,
+  fontSize: 48,
+  textColor: '#F8FAFC',
+  highlightColor: '#FACC15',
+};
+
+export const podcastTemplates = [podcastConversational, studioMic];

@@ -1,0 +1,88 @@
+import { TemplateConfig } from '@/types/template';
+
+export const boldKeyword: TemplateConfig = {
+  id: 'bold-keyword',
+  name: 'Bold Keyword',
+  category: 'Bold',
+  description: 'High-impact heavy typography with vibrant accent highlight on key words.',
+  tag: 'Trending',
+  supportedAspectRatios: ['9:16', '16:9', '1:1', '4:5'],
+  typography: { fontFamily: 'Montserrat', fontWeight: 800, fontSize: 58, letterSpacing: 0.5, lineHeight: 1.2, textCasing: 'uppercase' },
+  layout: { textLayout: 'big-keyword', maxCaptionWidth: 92 },
+  colors: { primaryTextColor: '#FFFFFF', highlightColor: '#FFD600', accentColor: '#FFD600' },
+  background: { type: 'shadow-only' },
+  stroke: { enabled: true, width: 2, color: '#000000', level: 'medium' },
+  shadow: { enabled: true, color: 'rgba(0, 0, 0, 0.9)', blur: 10 },
+  glow: { enabled: false },
+  highlight: { mode: 'one-keyword', highlightColors: ['#FFD600'] },
+  animation: { entrance: 'pop', wordBehavior: 'pop-word', characterBehavior: 'none' },
+  position: { x: 50, y: 82, anchor: 'center' },
+  fontFamily: 'Montserrat', fontWeight: 800, fontSize: 58, textColor: '#FFFFFF', highlightColor: '#FFD600',
+};
+
+export const hypeReels: TemplateConfig = {
+  id: 'hype-reels',
+  name: 'Hype Reels',
+  category: 'Bold',
+  description: 'Extra bold yellow typography designed for viral social shorts.',
+  tag: 'Viral',
+  supportedAspectRatios: ['9:16', '4:5'],
+  typography: { fontFamily: 'Oswald', fontWeight: 900, fontSize: 62, letterSpacing: 1, lineHeight: 1.15, textCasing: 'uppercase' },
+  layout: { textLayout: 'standard', maxCaptionWidth: 90 },
+  colors: { primaryTextColor: '#FFD600', highlightColor: '#FFFFFF', accentColor: '#000000' },
+  background: { type: 'solid', color: 'rgba(0, 0, 0, 0.9)', borderRadius: 10 },
+  stroke: { enabled: true, width: 3, color: '#000000', level: 'heavy' },
+  shadow: { enabled: true, color: 'rgba(0, 0, 0, 0.95)', blur: 12 },
+  glow: { enabled: false },
+  highlight: { mode: 'active-word', highlightColors: ['#FFFFFF'] },
+  animation: { entrance: 'bounce', wordBehavior: 'bounce-word', characterBehavior: 'none' },
+  position: { x: 50, y: 80, anchor: 'center' },
+  fontFamily: 'Oswald', fontWeight: 900, fontSize: 62, textColor: '#FFD600', highlightColor: '#FFFFFF',
+};
+
+export const thunderPunch: TemplateConfig = {
+  id: 'thunder-punch',
+  name: 'Thunder Punch',
+  category: 'Bold',
+  description: 'Ultra heavy uppercase font with high-contrast red accent highlight.',
+  tag: 'Power',
+  supportedAspectRatios: ['9:16', '16:9', '1:1'],
+  typography: { fontFamily: 'Montserrat', fontWeight: 900, fontSize: 60, letterSpacing: 1, lineHeight: 1.1, textCasing: 'uppercase' },
+  layout: { textLayout: 'big-keyword' },
+  colors: { primaryTextColor: '#FFFFFF', highlightColor: '#EF4444', accentColor: '#EF4444' },
+  background: { type: 'none' },
+  stroke: { enabled: true, width: 3, color: '#000000', level: 'heavy' },
+  shadow: { enabled: true, color: 'rgba(0, 0, 0, 0.9)', blur: 14 },
+  glow: { enabled: false },
+  highlight: { mode: 'one-keyword', highlightColors: ['#EF4444'] },
+  animation: { entrance: 'pop', wordBehavior: 'scale-word', characterBehavior: 'none' },
+  position: { x: 50, y: 82, anchor: 'center' },
+  fontFamily: 'Montserrat', fontWeight: 900, fontSize: 60, textColor: '#FFFFFF', highlightColor: '#EF4444',
+};
+
+export const boldCyanPop: TemplateConfig = {
+  id: 'bold-cyan-pop',
+  name: 'Bold Cyan Pop',
+  category: 'Bold',
+  description: 'Heavy condensed text with electric cyan pop highlight.',
+  tag: 'Electric',
+  supportedAspectRatios: ['9:16', '1:1', '4:5'],
+  typography: { fontFamily: 'Oswald', fontWeight: 800, fontSize: 58, letterSpacing: 0.5, lineHeight: 1.15, textCasing: 'uppercase' },
+  layout: { textLayout: 'standard' },
+  colors: { primaryTextColor: '#FFFFFF', highlightColor: '#00F0FF' },
+  background: { type: 'solid', color: 'rgba(15, 23, 42, 0.95)', borderRadius: 12 },
+  stroke: { enabled: true, width: 2, color: '#000000', level: 'medium' },
+  shadow: { enabled: true, color: 'rgba(0,0,0,0.9)', blur: 10 },
+  glow: { enabled: false },
+  highlight: { mode: 'active-word', highlightColors: ['#00F0FF'] },
+  animation: { entrance: 'pop', wordBehavior: 'pop-word', characterBehavior: 'none' },
+  position: { x: 50, y: 81, anchor: 'center' },
+  fontFamily: 'Oswald', fontWeight: 800, fontSize: 58, textColor: '#FFFFFF', highlightColor: '#00F0FF',
+};
+
+export const boldTemplates = [
+  boldKeyword,
+  hypeReels,
+  thunderPunch,
+  boldCyanPop,
+];

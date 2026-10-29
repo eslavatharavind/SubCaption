@@ -1,0 +1,27 @@
+import { TemplateConfig } from '@/types/template';
+
+export const cinematic: TemplateConfig = {
+  id: 'cinematic',
+  name: 'Cinematic Drama',
+  category: 'Cinematic',
+  description: 'Refined serif typography with wider tracking and smooth fade entrance.',
+  tag: 'Film',
+  fontFamily: 'Playfair Display',
+  fontWeight: 600,
+  fontSize: 40,
+  letterSpacing: 2,
+  lineHeight: 1.4,
+  textColor: '#F8FAFC',
+  highlightColor: '#E2E8F0',
+  textLayout: 'two-line',
+  background: 'transparent',
+  backgroundTreatment: 'shadow-only',
+  stroke: false,
+  shadow: true,
+  shadowBlur: 12,
+  shadowColor: 'rgba(0, 0, 0, 0.95)',
+  position: { x: 50, y: 88, anchor: 'bottom-center' },
+  animation: 'fade',
+  revealMode: 'line',
+  highlightMode: 'none',
+};

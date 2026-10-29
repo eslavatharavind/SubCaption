@@ -1,0 +1,27 @@
+import { TemplateConfig } from '@/types/template';
+
+export const cleanTransparent: TemplateConfig = {
+  id: 'clean-transparent',
+  name: 'Clean Transparent',
+  category: 'Clean',
+  description: 'Transparent background with modern crisp typography and subtle shadow.',
+  tag: 'Standard',
+  fontFamily: 'Inter',
+  fontWeight: 600,
+  fontSize: 46,
+  letterSpacing: 0,
+  lineHeight: 1.3,
+  textColor: '#FFFFFF',
+  highlightColor: '#38BDF8',
+  textLayout: 'single-line',
+  background: 'transparent',
+  backgroundTreatment: 'transparent',
+  stroke: false,
+  shadow: true,
+  shadowBlur: 8,
+  shadowColor: 'rgba(0, 0, 0, 0.85)',
+  position: { x: 50, y: 85, anchor: 'bottom-center' },
+  animation: 'fade',
+  revealMode: 'phrase',
+  highlightMode: 'none',
+};
