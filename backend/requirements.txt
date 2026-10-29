@@ -19,6 +19,7 @@ aiohttp==3.10.5
 
 # Video/Audio Processing
 ffmpeg-python==0.2.0
+imageio-ffmpeg==0.6.0
 
 # Environment
 python-dotenv==1.0.1
