@@ -1,0 +1,38 @@
+# Python & Virtual Environments
+venv/
+env/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Temporary media & renders
+temp/
+renders/
+*.mp4
+*.mov
+*.avi
+*.webm
+*.wav
+*.mp3
+
+# Testing & caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Scratch & logs
+scratch/
+*.log
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
