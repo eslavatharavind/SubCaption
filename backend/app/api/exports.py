@@ -84,6 +84,7 @@ async def run_video_export(
             text_layers=text_layers,
             template_config=template_config,
             aspect_ratio=aspect_ratio,
+            resolution=resolution,
             progress_callback=update_export_progress
         )
 
@@ -277,9 +278,84 @@ async def get_export_status(export_id: str, current_user: Optional[dict] = Depen
     raise HTTPException(status_code=404, detail="Export job not found")
 
 
-@router.get("/exports/{export_id}/download")
-async def download_export(export_id: str):
-    """Download exported MP4 video file"""
+@router.get("/projects/{project_id}/latest-export")
+async def get_latest_project_export(
+    project_id: str,
+    current_user: Optional[dict] = Depends(get_current_user_optional)
+):
+    """Get the latest export job for a project, if one exists"""
+
+    # 1. Look in active in-memory EXPORT_JOBS (latest first)
+    for exp_id, job in reversed(list(EXPORT_JOBS.items())):
+        if job.get("project_id") == project_id:
+            # Check if output file exists on disk if marked completed
+            if job.get("status") == ExportStatus.COMPLETED.value:
+                out_path = job.get("output_path")
+                if not out_path or not os.path.exists(out_path):
+                    render_dir = os.path.abspath(settings.REMOTION_RENDER_DIR)
+                    fallback_path = os.path.join(render_dir, f"{exp_id}.mp4")
+                    if os.path.exists(fallback_path):
+                        job["output_path"] = fallback_path
+                    else:
+                        continue  # File was cleaned up, look for another or fall back
+
+            return {
+                "id": exp_id,
+                "export_id": exp_id,
+                "project_id": project_id,
+                "status": job["status"],
+                "progress": float(job.get("progress", 0.0)),
+                "message": job.get("message", "Ready"),
+                "resolution": job.get("resolution", "1080p"),
+                "download_url": job.get("download_url") or f"/api/exports/{exp_id}/download",
+                "created_at": str(job.get("created_at") or datetime.utcnow())
+            }
+
+    # 2. Look in Supabase exports table
+    try:
+        uuid.UUID(str(project_id))
+        client = get_user_client(current_user["token"]) if current_user and "token" in current_user else supabase
+        res = client.table("exports").select("*").eq("project_id", project_id).order("created_at", desc=True).limit(1).execute()
+        if res.data:
+            row = res.data[0]
+            exp_id = row["id"]
+            render_dir = os.path.abspath(settings.REMOTION_RENDER_DIR)
+            fallback_path = os.path.join(render_dir, f"{exp_id}.mp4")
+
+            # Check if file exists if completed
+            if os.path.exists(fallback_path) or row.get("status") != "completed":
+                st = row["status"]
+                prog = 100.0 if st == "completed" else (50.0 if st == "processing" else 0.0)
+                return {
+                    "id": exp_id,
+                    "export_id": exp_id,
+                    "project_id": project_id,
+                    "status": st,
+                    "progress": prog,
+                    "message": "Export completed" if st == "completed" else st,
+                    "resolution": row.get("resolution", "1080p"),
+                    "download_url": row.get("download_url") or f"/api/exports/{exp_id}/download",
+                    "created_at": str(row.get("created_at") or datetime.utcnow())
+                }
+    except Exception:
+        pass
+
+    return {
+        "status": "none",
+        "export_id": None,
+        "progress": 0.0,
+        "message": "No exports found",
+        "download_url": None
+    }
+
+
+@router.api_route("/exports/{export_id}/download", methods=["GET", "HEAD"])
+async def download_export(
+    export_id: str,
+    filename: Optional[str] = None,
+    current_user: Optional[dict] = Depends(get_current_user_optional)
+):
+    """Download exported MP4 video file with support for custom filename and byte streaming"""
 
     job = EXPORT_JOBS.get(export_id)
     out_path = job.get("output_path") if job else None
@@ -294,10 +370,19 @@ async def download_export(export_id: str):
     if not out_path or not os.path.exists(out_path):
         raise HTTPException(status_code=404, detail="Exported video file not found or not ready yet")
 
+    download_name = filename or f"captioned_video_{export_id}.mp4"
+    if not download_name.lower().endswith(".mp4"):
+        download_name += ".mp4"
+
     return FileResponse(
         out_path,
         media_type="video/mp4",
-        filename=f"captioned_video_{export_id}.mp4"
+        filename=download_name,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Disposition": f'attachment; filename="{download_name}"',
+            "Cache-Control": "public, max-age=3600"
+        }
     )
 
 

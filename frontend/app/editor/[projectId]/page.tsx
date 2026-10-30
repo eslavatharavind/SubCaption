@@ -22,6 +22,7 @@ import {
 } from '@/lib/layers';
 import type { PersonMaskStatus } from '@/hooks/usePersonMask';
 import { transcriptionApi, captionsApi, templatesApi, exportsApi } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 import { CaptionSegment, CaptionWord, StyleData, PositionData, AnimationData, AnimationConfig, TextLayer, CaptionLayerMeta, LayerLayering } from '@/types';
 import {
   PRIMARY_ENTRANCE_PRESETS,
@@ -249,9 +250,23 @@ export default function EditorPage({ params }: EditorPageProps) {
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
   const [exportResolution, setExportResolution] = useState<'720p' | '1080p'>('1080p');
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [exportStatus, setExportStatus] = useState<'idle' | 'processing' | 'completed' | 'failed'>('idle');
   const [exportProgress, setExportProgress] = useState<number>(0);
   const [exportStepText, setExportStepText] = useState<string>('');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [currentExportId, setCurrentExportId] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState<boolean>(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const exportPollingRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Clear export polling timer on unmount
+  useEffect(() => {
+    return () => {
+      if (exportPollingRef.current) {
+        clearInterval(exportPollingRef.current);
+      }
+    };
+  }, []);
 
   const videoSrc = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'}/projects/${projectId}/video`;
   // Seekable local copy of the video (fixes seek/pause jumping back to 0:00).
@@ -976,10 +991,105 @@ export default function EditorPage({ params }: EditorPageProps) {
     setSelectedSegmentId(a.id);
   };
 
+  const startPollingExport = useCallback((exportId: string) => {
+    if (exportPollingRef.current) {
+      clearInterval(exportPollingRef.current);
+    }
+
+    let consecutiveFailures = 0;
+
+    exportPollingRef.current = setInterval(async () => {
+      try {
+        const statusRes = await exportsApi.getStatus(exportId);
+        const data = statusRes.data;
+        consecutiveFailures = 0;
+
+        setExportProgress(Math.max(15, Math.min(99, data.progress || 50)));
+        setExportStepText(data.message || 'Encoding video with FFmpeg...');
+
+        if (data.status === 'completed') {
+          if (exportPollingRef.current) clearInterval(exportPollingRef.current);
+          setIsExporting(false);
+          setExportProgress(100);
+          setExportStatus('completed');
+          setExportStepText('Export completed successfully!');
+          const dlUrl = exportsApi.downloadUrl(exportId, `captioned_${projectName || 'video'}.mp4`);
+          setDownloadUrl(dlUrl);
+          setCurrentExportId(exportId);
+        } else if (data.status === 'failed') {
+          if (exportPollingRef.current) clearInterval(exportPollingRef.current);
+          setIsExporting(false);
+          setExportStatus('failed');
+          setExportStepText(data.error || data.message || 'Export failed. Please check server logs.');
+        }
+      } catch (err: any) {
+        consecutiveFailures += 1;
+        // Don't kill polling on transient network hiccups
+        if (consecutiveFailures > 5) {
+          if (exportPollingRef.current) clearInterval(exportPollingRef.current);
+          setIsExporting(false);
+          setExportStatus('failed');
+          setExportStepText('Network connection lost while tracking export progress. Please retry.');
+        }
+      }
+    }, 1500);
+  }, [projectName]);
+
+  // Check latest export status when modal is opened
+  useEffect(() => {
+    if (!showExportModal || isExporting) return;
+    let isCancelled = false;
+
+    const checkLatest = async () => {
+      try {
+        const res = await exportsApi.getLatest(projectId);
+        const data = res.data;
+        if (isCancelled || !data) return;
+
+        if (data.status === 'completed' && (data.id || data.export_id)) {
+          const expId = data.id || data.export_id!;
+          setCurrentExportId(expId);
+          const dlUrl = exportsApi.downloadUrl(expId, `captioned_${projectName || 'video'}.mp4`);
+          setDownloadUrl(dlUrl);
+          setExportStatus('completed');
+          setExportProgress(100);
+          setExportStepText('Your exported video is ready for download.');
+        } else if ((data.status === 'processing' || data.status === 'pending') && (data.id || data.export_id)) {
+          const expId = data.id || data.export_id!;
+          setCurrentExportId(expId);
+          setIsExporting(true);
+          setExportStatus('processing');
+          setExportProgress(data.progress || 15);
+          setExportStepText(data.message || 'Processing video export...');
+          startPollingExport(expId);
+        }
+      } catch {
+        // Non-critical, user can start fresh export
+      }
+    };
+
+    if (exportStatus === 'idle' && !downloadUrl) {
+      checkLatest();
+    }
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [showExportModal, projectId, exportStatus, downloadUrl, isExporting, projectName, startPollingExport]);
+
   const handleStartExport = async () => {
+    if (isExporting) return; // Prevent duplicate export triggers
+
+    if (exportPollingRef.current) {
+      clearInterval(exportPollingRef.current);
+    }
+
     setIsExporting(true);
+    setExportStatus('processing');
     setExportProgress(10);
     setExportStepText('Preparing video & rendering captions...');
+    setDownloadUrl(null);
+    setDownloadError(null);
 
     try {
       // Merge active template styling into segments for export consistency
@@ -1019,36 +1129,103 @@ export default function EditorPage({ params }: EditorPageProps) {
       const createRes = await exportsApi.create(projectId, exportResolution, textLayers, exportSegmentsWithLayer, activeTemplate, selectedAspectRatio);
       const exportId = createRes.data?.id;
 
-      if (!exportId) throw new Error('Failed to obtain Export ID');
+      if (!exportId) throw new Error('Failed to obtain Export ID from server');
 
-      const interval = setInterval(async () => {
-        try {
-          const statusRes = await exportsApi.getStatus(exportId);
-          const data = statusRes.data;
-
-          setExportProgress(data.progress || 50);
-          setExportStepText(data.message || 'Encoding video with FFmpeg...');
-
-          if (data.status === 'completed') {
-            clearInterval(interval);
-            setIsExporting(false);
-            const backendBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
-            setDownloadUrl(`${backendBase}/exports/${exportId}/download`);
-          } else if (data.status === 'failed') {
-            clearInterval(interval);
-            setIsExporting(false);
-            setExportStepText(data.error || data.message || 'Export failed. Please check server logs.');
-          }
-        } catch {
-          clearInterval(interval);
-          setIsExporting(false);
-        }
-      }, 1500);
+      setCurrentExportId(exportId);
+      setExportProgress(15);
+      setExportStepText('Queued in FFmpeg rendering pipeline...');
+      startPollingExport(exportId);
 
     } catch (err: any) {
       setIsExporting(false);
+      setExportStatus('failed');
       setExportStepText(err?.response?.data?.detail || err.message || 'Export failed to start.');
     }
+  };
+
+  const handleDownloadMp4 = async () => {
+    if (!downloadUrl && !currentExportId) return;
+
+    setIsDownloading(true);
+    setDownloadError(null);
+
+    const targetUrl = downloadUrl || (currentExportId ? exportsApi.downloadUrl(currentExportId) : '');
+    const cleanFilename = (projectName || 'video').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `captioned_${cleanFilename}.mp4`;
+
+    try {
+      // 1. Get access token if authenticated
+      let token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+      if (!token) {
+        try {
+          const { data } = await supabase.auth.getSession();
+          token = data?.session?.access_token || null;
+        } catch {}
+      }
+
+      // 2. Fetch binary MP4 via fetch with CORS
+      const headers: Record<string, string> = {
+        Accept: 'video/mp4,application/octet-stream,*/*',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(targetUrl, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      // 3. Convert to Blob with video/mp4 MIME type
+      const blob = await response.blob();
+      const mp4Blob = new Blob([blob], { type: 'video/mp4' });
+
+      // 4. Create object URL (same-origin to the page, ensuring browser honors download attribute)
+      const blobUrl = window.URL.createObjectURL(mp4Blob);
+
+      // 5. Trigger download via programmatic anchor click
+      const tempLink = document.createElement('a');
+      tempLink.href = blobUrl;
+      tempLink.setAttribute('download', filename);
+      tempLink.style.display = 'none';
+      document.body.appendChild(tempLink);
+      tempLink.click();
+
+      // Clean up DOM and revoke object URL
+      setTimeout(() => {
+        if (document.body.contains(tempLink)) {
+          document.body.removeChild(tempLink);
+        }
+        window.URL.revokeObjectURL(blobUrl);
+      }, 2000);
+
+      setIsDownloading(false);
+    } catch (err: any) {
+      console.warn('Programmatic MP4 download error, triggering fallback:', err);
+      setIsDownloading(false);
+      setDownloadError(err?.message || 'Automatic download failed. Use the direct link below.');
+
+      // Fallback: direct window open / navigation to the download URL
+      if (targetUrl) {
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      }
+    }
+  };
+
+  const handleResetExport = () => {
+    if (exportPollingRef.current) {
+      clearInterval(exportPollingRef.current);
+    }
+    setIsExporting(false);
+    setExportStatus('idle');
+    setExportProgress(0);
+    setExportStepText('');
+    setDownloadUrl(null);
+    setDownloadError(null);
   };
 
   const positions: { id: PositionData['position']; label: string }[] = [
@@ -3938,10 +4115,121 @@ export default function EditorPage({ params }: EditorPageProps) {
         <Modal
           isOpen={showExportModal}
           onClose={() => setShowExportModal(false)}
-          title="Export MP4 Video"
-          description="Render final video with burned-in styled captions using FFmpeg."
+          title={
+            exportStatus === 'completed' || !!downloadUrl
+              ? 'Export Completed!'
+              : exportStatus === 'processing' || isExporting
+              ? 'Exporting Video...'
+              : exportStatus === 'failed'
+              ? 'Export Failed'
+              : 'Export MP4 Video'
+          }
+          description={
+            exportStatus === 'completed' || !!downloadUrl
+              ? 'Your video has been rendered and is ready to download.'
+              : exportStatus === 'processing' || isExporting
+              ? 'Please wait while FFmpeg burns styled captions into your video.'
+              : exportStatus === 'failed'
+              ? 'An error occurred during video rendering.'
+              : 'Render final video with burned-in styled captions using FFmpeg.'
+          }
         >
-          {!downloadUrl ? (
+          {exportStatus === 'completed' || !!downloadUrl ? (
+            <div className="text-center space-y-4 py-3">
+              <div className="w-14 h-14 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto border border-emerald-500/30 shadow-lg shadow-emerald-500/10">
+                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+
+              <div>
+                <h4 className="text-base font-bold text-white">Your MP4 Video is Ready!</h4>
+                <p className="text-xs text-brand-muted mt-1 max-w-sm mx-auto">
+                  Rendered at <span className="text-white font-semibold">{exportResolution}</span> with burned-in styled captions, fonts, and layout.
+                </p>
+              </div>
+
+              {downloadError && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs text-left">
+                  {downloadError}
+                </div>
+              )}
+
+              <div className="pt-2 flex flex-col gap-2.5 max-w-xs mx-auto">
+                <Button
+                  variant="primary"
+                  size="lg"
+                  onClick={handleDownloadMp4}
+                  disabled={isDownloading}
+                  className="w-full flex items-center justify-center gap-2 shadow-lg shadow-primary-600/30 font-bold"
+                >
+                  {isDownloading ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                      </svg>
+                      Downloading MP4...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Download MP4 Video
+                    </>
+                  )}
+                </Button>
+
+                {downloadUrl && (
+                  <a
+                    href={downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] text-brand-muted hover:text-white underline transition-colors py-1"
+                  >
+                    Direct link fallback (open or save in new tab)
+                  </a>
+                )}
+
+                <div className="pt-2 border-t border-[#262D36]/60 flex justify-between items-center text-xs">
+                  <button
+                    type="button"
+                    onClick={handleResetExport}
+                    className="text-brand-muted hover:text-white transition-colors"
+                  >
+                    &larr; Re-export / Change Settings
+                  </button>
+                  <Button variant="ghost" size="sm" onClick={() => setShowExportModal(false)}>
+                    Close
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : exportStatus === 'failed' ? (
+            <div className="space-y-4 py-2">
+              <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/25 flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center shrink-0 mt-0.5">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </div>
+                <div className="text-xs space-y-1">
+                  <p className="font-semibold text-rose-300">Export Failed</p>
+                  <p className="text-brand-muted break-words">{exportStepText || 'Rendering encountered an unexpected error.'}</p>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="ghost" size="md" onClick={() => setShowExportModal(false)}>
+                  Close
+                </Button>
+                <Button variant="primary" size="md" onClick={handleStartExport}>
+                  Retry Export
+                </Button>
+              </div>
+            </div>
+          ) : (
             <div className="space-y-4">
               {stack.anyBehind && (
                 <p className="text-xs text-violet-200 bg-violet-500/10 border border-violet-500/25 rounded-xl px-3 py-2" role="note">
@@ -3957,12 +4245,13 @@ export default function EditorPage({ params }: EditorPageProps) {
                     <button
                       key={res}
                       type="button"
+                      disabled={isExporting}
                       onClick={() => setExportResolution(res)}
                       className={`p-3 rounded-xl border text-xs font-bold transition-all ${
                         exportResolution === res
                           ? 'border-primary-500 bg-primary-500/10 text-white'
                           : 'border-[#262D36] bg-[#11151A] text-brand-muted'
-                      }`}
+                      } ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       {res} ({res === '1080p' ? '1080×1920' : '720×1280'})
                     </button>
@@ -3971,39 +4260,25 @@ export default function EditorPage({ params }: EditorPageProps) {
               </div>
 
               {isExporting ? (
-                <ProgressBar
-                  progress={exportProgress}
-                  statusText={exportStepText}
-                />
+                <div className="space-y-2 pt-1">
+                  <ProgressBar
+                    progress={exportProgress}
+                    statusText={exportStepText}
+                  />
+                  <p className="text-[11px] text-brand-muted text-center italic">
+                    Rendering on server with FFmpeg. You may close this dialog and return at any time.
+                  </p>
+                </div>
               ) : (
                 <div className="pt-2 flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3">
                   <Button variant="ghost" size="md" onClick={() => setShowExportModal(false)}>
                     Cancel
                   </Button>
-                  <Button variant="primary" size="md" onClick={handleStartExport}>
+                  <Button variant="primary" size="md" onClick={handleStartExport} disabled={isExporting}>
                     Export Video (.MP4)
                   </Button>
                 </div>
               )}
-            </div>
-          ) : (
-            <div className="text-center space-y-4 py-4">
-              <div className="w-12 h-12 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <h4 className="text-base font-bold text-white">Your MP4 Video is Ready!</h4>
-              <p className="text-xs text-brand-muted">
-                Rendered with burned-in captions, selected template, fonts, and positions.
-              </p>
-              <a
-                href={downloadUrl}
-                download
-                className="inline-block bg-primary-600 hover:bg-primary-500 text-white font-bold px-6 py-2.5 rounded-xl text-sm transition-all shadow-lg shadow-primary-600/30"
-              >
-                Download MP4 Video
-              </a>
             </div>
           )}
         </Modal>

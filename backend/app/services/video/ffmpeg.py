@@ -656,6 +656,7 @@ class FFmpegService:
         text_layers: Optional[List[Dict[str, Any]]] = None,
         template_config: Optional[Dict[str, Any]] = None,
         aspect_ratio: Optional[str] = "9:16",
+        resolution: Optional[str] = "1080p",
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> Dict[str, Any]:
         """Render captions onto input video using exact preview rendering with ASS fallback"""
@@ -736,13 +737,30 @@ class FFmpegService:
             clean_fonts_dir = fonts_dir.replace("\\", "/").replace(":", "\\:")
             subtitles_filter = f"subtitles='{clean_ass_path}':fontsdir='{clean_fonts_dir}'"
 
+            # Filter chain: burn styled subtitles, then scale resolution if requested
+            vf_filters = [subtitles_filter]
+            res_str = (resolution or "1080p").lower()
+            if "720" in res_str:
+                if video_w > video_h:
+                    vf_filters.append("scale=-2:720")
+                else:
+                    vf_filters.append("scale=720:-2")
+            elif "1080" in res_str:
+                if video_w > video_h and video_h > 1080:
+                    vf_filters.append("scale=-2:1080")
+                elif video_h >= video_w and video_w > 1080:
+                    vf_filters.append("scale=1080:-2")
+
+            final_vf = ",".join(vf_filters)
+
             # Construct high-performance FFmpeg command
             cmd = [
                 self.ffmpeg_path,
                 "-y",
                 "-i", input_video_path,
-                "-vf", subtitles_filter,
+                "-vf", final_vf,
                 "-vcodec", "libx264",
+                "-pix_fmt", "yuv420p",
                 "-preset", "veryfast",
                 "-crf", "22",
                 "-threads", "0"
