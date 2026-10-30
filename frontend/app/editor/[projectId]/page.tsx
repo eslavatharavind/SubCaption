@@ -21,7 +21,7 @@ import {
   uniqueLayerName,
 } from '@/lib/layers';
 import type { PersonMaskStatus } from '@/hooks/usePersonMask';
-import { transcriptionApi, captionsApi, templatesApi, exportsApi } from '@/lib/api';
+import { transcriptionApi, captionsApi, templatesApi, exportsApi, uploadApi } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { CaptionSegment, CaptionWord, StyleData, PositionData, AnimationData, AnimationConfig, TextLayer, CaptionLayerMeta, LayerLayering } from '@/types';
 import {
@@ -268,7 +268,7 @@ export default function EditorPage({ params }: EditorPageProps) {
     };
   }, []);
 
-  const videoSrc = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'}/projects/${projectId}/video`;
+  const videoSrc = uploadApi.getVideoUrl(projectId);
   // Seekable local copy of the video (fixes seek/pause jumping back to 0:00).
   const { src: playableVideoSrc, state: videoLoadState, progress: videoLoadProgress } = usePlayableVideoSrc(videoSrc);
 

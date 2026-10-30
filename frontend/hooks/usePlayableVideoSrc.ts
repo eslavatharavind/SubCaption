@@ -3,10 +3,9 @@ import { useEffect, useState } from 'react';
 export type VideoLoadState = 'loading' | 'ready' | 'fallback';
 
 /**
- * The backend serves project videos without HTTP Range support, so browsers cannot seek
- * inside them: any seek (or play after seeking) jumps back to 0:00. Loading the file once
- * into a Blob URL makes the whole video locally seekable without changing the backend.
- * If the download fails, the original URL is used so playback still works.
+ * Preloads the video into a local Blob URL for instant, low-latency seeking and scrubbing.
+ * If preloading cannot complete (or on slow connections), gracefully falls back to the
+ * direct HTTP-streamed video URL (which supports HTTP 206 Partial Content byte ranges).
  */
 export function usePlayableVideoSrc(remoteSrc: string) {
   const [src, setSrc] = useState<string>('');
@@ -14,6 +13,12 @@ export function usePlayableVideoSrc(remoteSrc: string) {
   const [progress, setProgress] = useState<number>(0);
 
   useEffect(() => {
+    if (!remoteSrc) {
+      setSrc('');
+      setState('fallback');
+      return;
+    }
+
     let cancelled = false;
     let objectUrl: string | null = null;
     const controller = new AbortController();
@@ -23,29 +28,46 @@ export function usePlayableVideoSrc(remoteSrc: string) {
 
     (async () => {
       try {
-        const res = await fetch(remoteSrc, { signal: controller.signal });
-        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        const headers: Record<string, string> = {};
+        if (typeof window !== 'undefined') {
+          const token = localStorage.getItem('access_token');
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+          }
+        }
+
+        const res = await fetch(remoteSrc, { signal: controller.signal, headers });
+        if (!res.ok || !res.body) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText || 'Unable to fetch video'}`);
+        }
+
         const total = Number(res.headers.get('content-length')) || 0;
         const reader = res.body.getReader();
         const chunks: BlobPart[] = [];
         let received = 0;
+
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
           if (value) {
             chunks.push(value);
             received += value.length;
-            if (total && !cancelled) setProgress(Math.round((received / total) * 100));
+            if (total && !cancelled) {
+              setProgress(Math.round((received / total) * 100));
+            }
           }
         }
-        const blob = new Blob(chunks, { type: res.headers.get('content-type') || 'video/mp4' });
+
+        const contentType = res.headers.get('content-type') || 'video/mp4';
+        const blob = new Blob(chunks, { type: contentType });
         if (cancelled) return;
+
         objectUrl = URL.createObjectURL(blob);
         setSrc(objectUrl);
         setState('ready');
-      } catch (err) {
+      } catch (err: any) {
         if (cancelled) return;
-        console.warn('Falling back to streamed video (seeking may be limited):', err);
+        console.warn('Falling back to streamed video (using backend range streaming):', err?.message || err);
         setSrc(remoteSrc);
         setState('fallback');
       }
@@ -54,7 +76,9 @@ export function usePlayableVideoSrc(remoteSrc: string) {
     return () => {
       cancelled = true;
       controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
     };
   }, [remoteSrc]);
 

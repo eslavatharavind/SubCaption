@@ -1,8 +1,10 @@
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 import time
+import re
 from typing import Dict, Any
 
 from .core.config import settings
@@ -31,6 +33,17 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=600,
 )
+
+
+class PathNormalizeMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        raw_path = request.scope.get("path", "")
+        if "//" in raw_path:
+            request.scope["path"] = re.sub(r"/+", "/", raw_path)
+        return await call_next(request)
+
+
+app.add_middleware(PathNormalizeMiddleware)
 
 
 # Exception handlers
@@ -83,6 +96,14 @@ app.include_router(uploads.router, prefix=settings.API_PREFIX, tags=["uploads"])
 app.include_router(captions.router, prefix=settings.API_PREFIX, tags=["captions"])
 app.include_router(templates.router, prefix=settings.API_PREFIX, tags=["templates"])
 app.include_router(exports.router, prefix=settings.API_PREFIX, tags=["exports"])
+
+# Direct video endpoint without /api prefix for maximum client/proxy compatibility
+app.add_api_route(
+    "/projects/{project_id}/video",
+    uploads.get_project_video,
+    methods=["GET", "HEAD"],
+    include_in_schema=False
+)
 
 
 @app.on_event("startup")

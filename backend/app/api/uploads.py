@@ -173,18 +173,134 @@ async def get_upload_status(project_id: str):
     )
 
 
-from fastapi.responses import FileResponse
+from fastapi import Request
+from starlette.responses import StreamingResponse, Response, FileResponse
 
-@router.get("/projects/{project_id}/video")
-async def get_project_video(project_id: str):
-    """Serve the temporary video file for streaming/preview in the frontend video player"""
-    temp_dir = os.path.abspath(settings.TEMP_DIR)
-    if os.path.exists(temp_dir):
-        for file_name in os.listdir(temp_dir):
-            if file_name.startswith(f"{project_id}_input"):
-                video_path = os.path.join(temp_dir, file_name)
-                ext = Path(file_name).suffix.lower()
-                media_type = "video/mp4" if ext == ".mp4" else ("video/webm" if ext == ".webm" else "video/quicktime")
-                return FileResponse(video_path, media_type=media_type)
-    raise HTTPException(status_code=404, detail="Video file not found in temporary storage")
+
+def find_project_video_file(project_id: str) -> Optional[str]:
+    """Search for uploaded or processed video file across candidate storage directories"""
+    curr_path = Path(__file__).resolve()
+    candidates = [
+        os.path.abspath(settings.TEMP_DIR),
+        os.path.abspath("./temp"),
+        os.path.abspath("./backend/temp"),
+        str(curr_path.parents[2] / "temp"),
+        str(curr_path.parents[3] / "temp") if len(curr_path.parents) > 3 else "",
+        os.path.abspath(settings.REMOTION_RENDER_DIR),
+        str(curr_path.parents[2] / "renders"),
+    ]
+    seen = set()
+    for d in candidates:
+        if not d or d in seen or not os.path.exists(d):
+            continue
+        seen.add(d)
+        try:
+            files = os.listdir(d)
+        except Exception:
+            continue
+
+        # Priority 1: f"{project_id}_input.*"
+        for f in files:
+            ext = Path(f).suffix.lower()
+            if ext in settings.ALLOWED_VIDEO_FORMATS and f.startswith(f"{project_id}_input"):
+                return os.path.join(d, f)
+
+        # Priority 2: f"{project_id}_source.*" or f"{project_id}.*" or f"{project_id}_*"
+        for f in files:
+            ext = Path(f).suffix.lower()
+            if ext in settings.ALLOWED_VIDEO_FORMATS and (f.startswith(f"{project_id}.") or f.startswith(f"{project_id}_")):
+                return os.path.join(d, f)
+
+        # Priority 3: any video starting with project_id
+        for f in files:
+            ext = Path(f).suffix.lower()
+            if ext in settings.ALLOWED_VIDEO_FORMATS and f.startswith(project_id):
+                return os.path.join(d, f)
+
+    return None
+
+
+@router.api_route("/projects/{project_id}/video", methods=["GET", "HEAD"])
+async def get_project_video(project_id: str, request: Request):
+    """
+    Serve the project video file for streaming/preview with full HTTP 206 Byte-Range
+    support for smooth, instant seeking in video players and browser media elements.
+    """
+    video_path = find_project_video_file(project_id)
+    if not video_path or not os.path.exists(video_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video file for project '{project_id}' not found in temporary storage"
+        )
+
+    ext = Path(video_path).suffix.lower()
+    media_type = "video/mp4" if ext == ".mp4" else ("video/webm" if ext == ".webm" else "video/quicktime")
+    file_size = os.path.getsize(video_path)
+
+    headers = {
+        "Content-Type": media_type,
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "public, max-age=3600",
+        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type",
+    }
+
+    range_header = request.headers.get("range")
+    if not range_header:
+        headers["Content-Length"] = str(file_size)
+        if request.method == "HEAD":
+            return Response(status_code=200, headers=headers)
+        return FileResponse(video_path, media_type=media_type, headers=headers)
+
+    # Range header present (e.g. "bytes=0-1000" or "bytes=5000-")
+    try:
+        h = range_header.strip().lower()
+        if not h.startswith("bytes="):
+            raise ValueError()
+        range_val = h[6:]
+        start_str, end_str = range_val.split("-", 1)
+        start = int(start_str) if start_str else 0
+        end = int(end_str) if end_str else file_size - 1
+        if end >= file_size:
+            end = file_size - 1
+        if start > end or start >= file_size:
+            return Response(
+                status_code=416,
+                headers={
+                    "Content-Range": f"bytes */{file_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Type": media_type,
+                    "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type",
+                }
+            )
+
+        content_length = end - start + 1
+        headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+        headers["Content-Length"] = str(content_length)
+
+        if request.method == "HEAD":
+            return Response(status_code=206, headers=headers)
+
+        def file_iterator():
+            with open(video_path, "rb") as f:
+                f.seek(start)
+                bytes_left = content_length
+                chunk_size = 64 * 1024  # 64KB chunks
+                while bytes_left > 0:
+                    read_size = min(chunk_size, bytes_left)
+                    chunk = f.read(read_size)
+                    if not chunk:
+                        break
+                    bytes_left -= len(chunk)
+                    yield chunk
+
+        return StreamingResponse(
+            file_iterator(),
+            status_code=206,
+            headers=headers
+        )
+    except Exception:
+        headers["Content-Length"] = str(file_size)
+        if request.method == "HEAD":
+            return Response(status_code=200, headers=headers)
+        return FileResponse(video_path, media_type=media_type, headers=headers)
 
