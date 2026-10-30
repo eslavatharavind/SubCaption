@@ -5,11 +5,13 @@ from datetime import datetime
 import os
 import uuid
 import asyncio
+from pathlib import Path
 from ..schemas.export import ExportRequest, ExportJob, ExportProgress, ExportStatus, Resolution
 from ..services.video.ffmpeg import ffmpeg_service
 from ..services.cleanup.temporary_files import cleanup_service
 from ..core.security import get_current_user_optional, get_user_client, supabase
-from ..api.captions import PROJECT_CAPTIONS
+from ..api.captions import PROJECT_CAPTIONS, _load_persisted_captions, load_segments_from_supabase
+from ..api.uploads import find_project_video_file
 from ..utils.logging import get_logger
 from ..core.config import settings
 
@@ -18,6 +20,30 @@ logger = get_logger(__name__)
 
 # In-memory store for export job status
 EXPORT_JOBS: Dict[str, Dict[str, Any]] = {}
+
+
+def find_export_file(export_id: str) -> Optional[str]:
+    """Search for rendered MP4 export file across candidate storage directories"""
+    curr_path = Path(__file__).resolve()
+    candidates = [
+        os.path.abspath(settings.REMOTION_RENDER_DIR),
+        os.path.abspath("./renders"),
+        os.path.abspath("./backend/renders"),
+        str(curr_path.parents[2] / "renders"),
+        str(curr_path.parents[3] / "renders") if len(curr_path.parents) > 3 else "",
+        os.path.abspath(settings.TEMP_DIR),
+        os.path.abspath("./temp"),
+        os.path.abspath("./backend/temp"),
+    ]
+    seen = set()
+    for d in candidates:
+        if not d or d in seen or not os.path.exists(d):
+            continue
+        seen.add(d)
+        target = os.path.join(d, f"{export_id}.mp4")
+        if os.path.exists(target):
+            return target
+    return None
 
 
 async def run_video_export(
@@ -31,6 +57,12 @@ async def run_video_export(
 ):
     """Background task to render captions into final MP4 video"""
     try:
+        # Ensure temporary and render directories exist
+        temp_dir = os.path.abspath(settings.TEMP_DIR)
+        render_dir = os.path.abspath(settings.REMOTION_RENDER_DIR)
+        os.makedirs(temp_dir, exist_ok=True)
+        os.makedirs(render_dir, exist_ok=True)
+
         EXPORT_JOBS[export_id] = {
             "id": export_id,
             "project_id": project_id,
@@ -52,13 +84,20 @@ async def run_video_export(
         except Exception:
             pass
 
-        # Locate temporary source video file
-        temp_dir = os.path.abspath(settings.TEMP_DIR)
-        video_files = [f for f in os.listdir(temp_dir) if f.startswith(project_id) and f.endswith(('.mp4', '.mov', '.webm'))]
+        # Locate temporary source video file across storage directories
+        input_video_path = find_project_video_file(project_id)
+        if not input_video_path or not os.path.exists(input_video_path):
+            # Fallback check in temp_dir
+            fallback_matches = [
+                os.path.join(temp_dir, f) for f in os.listdir(temp_dir)
+                if f.startswith(project_id) and f.endswith(('.mp4', '.mov', '.webm', '.mkv'))
+            ]
+            if fallback_matches:
+                input_video_path = fallback_matches[0]
 
-        if not video_files:
+        if not input_video_path or not os.path.exists(input_video_path):
             EXPORT_JOBS[export_id]["status"] = ExportStatus.FAILED.value
-            EXPORT_JOBS[export_id]["message"] = "Source video file not found in temporary storage"
+            EXPORT_JOBS[export_id]["message"] = f"Source video file for project '{project_id}' not found. Please upload your video again."
             try:
                 uuid.UUID(str(export_id))
                 supabase.table("exports").update({"status": ExportStatus.FAILED.value}).eq("id", export_id).execute()
@@ -66,9 +105,12 @@ async def run_video_export(
                 pass
             return
 
-        input_video_path = os.path.join(temp_dir, video_files[0])
         if not segments:
             segments = PROJECT_CAPTIONS.get(project_id, [])
+        if not segments:
+            segments = _load_persisted_captions(project_id)
+        if not segments:
+            segments = load_segments_from_supabase(project_id) or []
 
         def update_export_progress(pct: float, msg: str):
             if export_id in EXPORT_JOBS:
@@ -121,13 +163,25 @@ async def run_video_export(
 
     except Exception as e:
         logger.error("Video export task failed", export_id=export_id, error=str(e))
-        EXPORT_JOBS[export_id] = {
-            "id": export_id,
-            "project_id": project_id,
-            "status": ExportStatus.FAILED.value,
-            "progress": 0.0,
-            "message": f"Export error: {str(e)}"
-        }
+        if export_id in EXPORT_JOBS:
+            EXPORT_JOBS[export_id].update({
+                "status": ExportStatus.FAILED.value,
+                "progress": 0.0,
+                "message": f"Export error: {str(e)}"
+            })
+        else:
+            EXPORT_JOBS[export_id] = {
+                "id": export_id,
+                "project_id": project_id,
+                "status": ExportStatus.FAILED.value,
+                "progress": 0.0,
+                "message": f"Export error: {str(e)}"
+            }
+        try:
+            uuid.UUID(str(export_id))
+            supabase.table("exports").update({"status": ExportStatus.FAILED.value}).eq("id", export_id).execute()
+        except Exception:
+            pass
         try:
             uuid.UUID(str(export_id))
             supabase.table("exports").update({"status": ExportStatus.FAILED.value}).eq("id", export_id).execute()
@@ -292,10 +346,9 @@ async def get_latest_project_export(
             if job.get("status") == ExportStatus.COMPLETED.value:
                 out_path = job.get("output_path")
                 if not out_path or not os.path.exists(out_path):
-                    render_dir = os.path.abspath(settings.REMOTION_RENDER_DIR)
-                    fallback_path = os.path.join(render_dir, f"{exp_id}.mp4")
-                    if os.path.exists(fallback_path):
-                        job["output_path"] = fallback_path
+                    found = find_export_file(exp_id)
+                    if found:
+                        job["output_path"] = found
                     else:
                         continue  # File was cleaned up, look for another or fall back
 
@@ -323,7 +376,8 @@ async def get_latest_project_export(
             fallback_path = os.path.join(render_dir, f"{exp_id}.mp4")
 
             # Check if file exists if completed
-            if os.path.exists(fallback_path) or row.get("status") != "completed":
+            found_path = find_export_file(exp_id)
+            if found_path or row.get("status") != "completed":
                 st = row["status"]
                 prog = 100.0 if st == "completed" else (50.0 if st == "processing" else 0.0)
                 return {
@@ -360,12 +414,11 @@ async def download_export(
     job = EXPORT_JOBS.get(export_id)
     out_path = job.get("output_path") if job else None
 
-    # Check render directory if out_path not in job dict
+    # Check candidate render directories if out_path not in job dict or missing
     if not out_path or not os.path.exists(out_path):
-        render_dir = os.path.abspath(settings.REMOTION_RENDER_DIR)
-        fallback_path = os.path.join(render_dir, f"{export_id}.mp4")
-        if os.path.exists(fallback_path):
-            out_path = fallback_path
+        out_path = find_export_file(export_id)
+        if out_path and job:
+            job["output_path"] = out_path
 
     if not out_path or not os.path.exists(out_path):
         raise HTTPException(status_code=404, detail="Exported video file not found or not ready yet")
@@ -381,7 +434,8 @@ async def download_export(
         headers={
             "Accept-Ranges": "bytes",
             "Content-Disposition": f'attachment; filename="{download_name}"',
-            "Cache-Control": "public, max-age=3600"
+            "Cache-Control": "public, max-age=3600",
+            "Access-Control-Expose-Headers": "Content-Disposition, Content-Length, Content-Type, Accept-Ranges",
         }
     )
 

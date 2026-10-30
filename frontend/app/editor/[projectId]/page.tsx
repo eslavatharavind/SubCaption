@@ -1124,7 +1124,13 @@ export default function EditorPage({ params }: EditorPageProps) {
         };
       });
 
-      await captionsApi.updateAll(projectId, exportSegments);
+      // Sync captions to backend if possible (non-blocking for export payload)
+      try {
+        await captionsApi.updateAll(projectId, exportSegments);
+      } catch (updateErr) {
+        console.warn('Could not sync captions before export (continuing):', updateErr);
+      }
+
       const exportSegmentsWithLayer = exportSegments.map((seg) => ({ ...seg, caption_layer: captionLayer })) as any;
       const createRes = await exportsApi.create(projectId, exportResolution, textLayers, exportSegmentsWithLayer, activeTemplate, selectedAspectRatio);
       const exportId = createRes.data?.id;
@@ -1139,7 +1145,11 @@ export default function EditorPage({ params }: EditorPageProps) {
     } catch (err: any) {
       setIsExporting(false);
       setExportStatus('failed');
-      setExportStepText(err?.response?.data?.detail || err.message || 'Export failed to start.');
+      let msg = err?.response?.data?.detail || err.message || 'Export failed to start.';
+      if (msg === 'Network Error' || (err?.isAxiosError && !err?.response)) {
+        msg = 'Cannot connect to backend server. The server may be waking up (Render free tier), please wait a few seconds and retry.';
+      }
+      setExportStepText(msg);
     }
   };
 

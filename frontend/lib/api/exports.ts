@@ -36,7 +36,10 @@ export const exportsApi = {
   getLatest: (projectId: string) => apiClient.get<ExportProgressResponse>(`/projects/${projectId}/latest-export`),
   downloadUrl: (exportId: string, filename?: string) => {
     const rawBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
-    const base = rawBase.replace(/\/+$/, '');
+    let base = rawBase.trim().replace(/\/+$/, '');
+    if (!base.endsWith('/api')) {
+      base = `${base}/api`;
+    }
     const fnParam = filename ? `?filename=${encodeURIComponent(filename)}` : '';
     return `${base}/exports/${exportId}/download${fnParam}`;
   },

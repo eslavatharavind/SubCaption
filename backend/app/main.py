@@ -39,7 +39,16 @@ class PathNormalizeMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         raw_path = request.scope.get("path", "")
         if "//" in raw_path:
-            request.scope["path"] = re.sub(r"/+", "/", raw_path)
+            raw_path = re.sub(r"/+", "/", raw_path)
+            request.scope["path"] = raw_path
+
+        # If an API request is made without the /api prefix, internally route it to /api
+        if not raw_path.startswith("/api/") and not raw_path.startswith("/docs") and not raw_path.startswith("/redoc") and raw_path not in ("/", "/health"):
+            for route_prefix in ("/projects", "/exports", "/captions", "/templates", "/upload", "/auth"):
+                if raw_path == route_prefix or raw_path.startswith(route_prefix + "/"):
+                    request.scope["path"] = f"/api{raw_path}"
+                    break
+
         return await call_next(request)
 
 
@@ -89,13 +98,19 @@ async def health():
     }
 
 
-# Include routers
+# Include routers with /api prefix (standard API endpoints)
 app.include_router(auth.router, prefix=settings.API_PREFIX, tags=["auth"])
 app.include_router(projects.router, prefix=settings.API_PREFIX, tags=["projects"])
 app.include_router(uploads.router, prefix=settings.API_PREFIX, tags=["uploads"])
 app.include_router(captions.router, prefix=settings.API_PREFIX, tags=["captions"])
 app.include_router(templates.router, prefix=settings.API_PREFIX, tags=["templates"])
 app.include_router(exports.router, prefix=settings.API_PREFIX, tags=["exports"])
+
+# Direct routes without /api prefix for proxy/client compatibility
+app.include_router(exports.router, tags=["exports-root"], include_in_schema=False)
+app.include_router(captions.router, tags=["captions-root"], include_in_schema=False)
+app.include_router(uploads.router, tags=["uploads-root"], include_in_schema=False)
+app.include_router(projects.router, tags=["projects-root"], include_in_schema=False)
 
 # Direct video endpoint without /api prefix for maximum client/proxy compatibility
 app.add_api_route(
@@ -109,6 +124,9 @@ app.add_api_route(
 @app.on_event("startup")
 async def startup_event():
     """Startup event handler"""
+    import os
+    os.makedirs(os.path.abspath(settings.TEMP_DIR), exist_ok=True)
+    os.makedirs(os.path.abspath(settings.REMOTION_RENDER_DIR), exist_ok=True)
     logger.info(
         "Application starting",
         app=settings.APP_NAME,

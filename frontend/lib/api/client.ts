@@ -1,10 +1,23 @@
 import axios from 'axios';
 import { supabase } from '@/lib/supabase';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+const getApiBaseUrl = (): string => {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (!envUrl) {
+    return 'http://localhost:8000/api';
+  }
+  let url = envUrl.trim().replace(/\/+$/, '');
+  if (!url.endsWith('/api')) {
+    url = `${url}/api`;
+  }
+  return url;
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 60000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -42,6 +55,10 @@ apiClient.interceptors.response.use(
       detail = typeof error.response.data.detail === 'string'
         ? error.response.data.detail
         : JSON.stringify(error.response.data.detail);
+    } else if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+      detail = 'The request timed out. The server might be processing a large task or waking up.';
+    } else if (error.message === 'Network Error' || (error.isAxiosError && !error.response)) {
+      detail = 'Cannot connect to backend server. The server may be waking up (Render free tier) or temporarily unreachable. Please retry in a few seconds.';
     } else if (error.message) {
       detail = error.message;
     }

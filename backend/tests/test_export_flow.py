@@ -212,3 +212,74 @@ async def test_end_to_end_render_with_resolution():
     if os.path.exists(out_path):
         os.remove(out_path)
 
+
+def test_export_routes_without_api_prefix():
+    """Verify export endpoints function properly without /api prefix for proxy compatibility"""
+    project_id = "test-no-prefix-proj"
+    export_id = "test-no-prefix-exp"
+
+    # 1. POST /projects/{project_id}/export (no /api prefix)
+    res_post = client.post(
+        f"/projects/{project_id}/export",
+        json={"project_id": project_id, "resolution": "720p"}
+    )
+    assert res_post.status_code == 201
+    created_id = res_post.json()["id"]
+
+    # 2. GET /exports/{export_id}/status (no /api prefix)
+    res_status = client.get(f"/exports/{created_id}/status")
+    assert res_status.status_code == 200
+    assert res_status.json()["export_id"] == created_id
+
+    # 3. GET /projects/{project_id}/latest-export (no /api prefix)
+    res_latest = client.get(f"/projects/{project_id}/latest-export")
+    assert res_status.status_code == 200
+
+
+def test_cors_preflight_on_export_endpoints():
+    """Verify CORS preflight returns 200 and allowed origin for both /api and root paths"""
+    allowed_origin = "https://sub-caption.vercel.app"
+
+    # Preflight on /api path
+    res_api = client.options(
+        "/api/projects/test-proj/export",
+        headers={
+            "Origin": allowed_origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,authorization"
+        }
+    )
+    assert res_api.status_code == 200
+    assert res_api.headers.get("access-control-allow-origin") == allowed_origin
+
+    # Preflight on root path without /api
+    res_root = client.options(
+        "/projects/test-proj/export",
+        headers={
+            "Origin": allowed_origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,authorization"
+        }
+    )
+    assert res_root.status_code == 200
+    assert res_root.headers.get("access-control-allow-origin") == allowed_origin
+
+
+@pytest.mark.asyncio
+async def test_run_video_export_missing_file_graceful():
+    """Verify run_video_export handles missing source file gracefully without raising unhandled FileNotFoundError"""
+    from app.api.exports import run_video_export
+
+    missing_exp_id = "test-missing-file-exp"
+    await run_video_export(
+        export_id=missing_exp_id,
+        project_id="non-existent-proj-9999",
+        resolution="1080p"
+    )
+
+    assert missing_exp_id in EXPORT_JOBS
+    job = EXPORT_JOBS[missing_exp_id]
+    assert job["status"] == ExportStatus.FAILED.value
+    assert "not found" in job["message"].lower()
+    assert "no such file or directory" not in job["message"].lower()
+
